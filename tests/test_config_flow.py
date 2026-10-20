@@ -4,11 +4,13 @@ import probatio
 
 from homeassistant.data_entry_flow import FlowResultType
 
+from custom_components.open_meteo_advanced.const import DOMAIN
+
 
 async def test_location_form_can_be_serialized_for_ui(hass):
     """The first setup form must render in Home Assistant."""
     result = await hass.config_entries.flow.async_init(
-        "open_meteo_advanced", context={"source": "user"}
+        DOMAIN, context={"source": "user"}
     )
 
     assert result["type"] is FlowResultType.FORM
