@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 
 import aiohttp
@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     API_BASE_URL,
@@ -74,6 +75,7 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "latitude": opts[CONF_LATITUDE],
             "longitude": opts[CONF_LONGITUDE],
             "timezone": "auto",
+            "timeformat": "unixtime",
             "wind_speed_unit": "kmh",
             "forecast_days": opts.get(CONF_FORECAST_DAYS, 7),
             "past_days": opts.get(CONF_PAST_DAYS, 0),
@@ -102,11 +104,25 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raw = await resp.json()
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Connection error: {err}") from err
+        except TimeoutError as err:
+            raise UpdateFailed("Timed out fetching Open-Meteo data") from err
+        except ValueError as err:
+            raise UpdateFailed(f"Invalid API JSON: {err}") from err
 
-        result = self._parse_sensors(raw, user_hourly, user_daily, user_current)
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("Expected an API response object")
+            if raw.get("error"):
+                raise UpdateFailed(f"API error: {raw.get('reason', 'Unknown error')}")
+            for section in ("current", "hourly", "daily"):
+                if raw.get(section) is not None and not isinstance(raw[section], dict):
+                    raise ValueError(f"Invalid {section} data")
 
-        if weather_entity:
-            result["_weather"] = self._parse_weather(raw)
+            result = self._parse_sensors(raw, user_hourly, user_daily, user_current)
+            if weather_entity:
+                result["_weather"] = self._parse_weather(raw)
+        except (KeyError, TypeError, ValueError, OverflowError) as err:
+            raise UpdateFailed(f"Invalid API response: {err}") from err
 
         return result
 
@@ -122,52 +138,59 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         current_vars: list[str],
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        now = datetime.now()
+        now = dt_util.utcnow()
+        zone = _response_timezone(raw)
 
-        if current_vars and "current" in raw:
-            current = raw["current"]
-            for var in current_vars:
-                result[f"current_{var}"] = current.get(var)
+        current = raw.get("current") or {}
+        for var in current_vars:
+            result[f"current_{var}"] = current.get(var)
 
-        if hourly_vars and "hourly" in raw:
-            hourly = raw["hourly"]
-            times: list[str] = hourly.get("time", [])
-            current_hour = now.strftime("%Y-%m-%dT%H:00")
-
-            idx = next((i for i, t in enumerate(times) if t == current_hour), None)
-            if idx is None:
-                for i, t in enumerate(times):
-                    if t <= current_hour:
-                        idx = i
+        if hourly_vars:
+            hourly = raw.get("hourly") or {}
+            times = [_utc_timestamp(t) for t in _series(hourly, "time")]
+            idx = next(
+                (i for i, t in enumerate(times) if t <= now < t + timedelta(hours=1)),
+                None,
+            )
+            upcoming = [
+                i for i, t in enumerate(times) if t + timedelta(hours=1) > now
+            ][:MAX_HOURLY_FORECAST]
 
             for var in hourly_vars:
-                values: list = hourly.get(var, [])
-                result[f"hourly_{var}"] = values[idx] if idx is not None and idx < len(values) else None
-                if idx is not None:
-                    end = min(idx + MAX_HOURLY_FORECAST, len(times))
-                    result[f"hourly_{var}_forecast"] = [
-                        {"time": times[i], "value": values[i] if i < len(values) else None}
-                        for i in range(idx, end)
-                    ]
+                result[f"hourly_{var}"] = _value(hourly, var, idx)
+                result[f"hourly_{var}_forecast"] = [
+                    {"time": times[i].isoformat(), "value": _value(hourly, var, i)}
+                    for i in upcoming
+                ]
 
-        if daily_vars and "daily" in raw:
-            daily = raw["daily"]
-            times = daily.get("time", [])
-            today = now.strftime("%Y-%m-%d")
-
-            idx = next((i for i, t in enumerate(times) if t == today), None)
-            if idx is None and times:
-                idx = 0
+        if daily_vars:
+            daily = raw.get("daily") or {}
+            dates = _daily_dates(raw, daily)
+            today = now.astimezone(zone).date()
+            idx = next((i for i, date in enumerate(dates) if date == today), None)
+            upcoming = [
+                i for i, date in enumerate(dates) if date >= today
+            ][:MAX_DAILY_FORECAST]
 
             for var in daily_vars:
-                values = daily.get(var, [])
-                result[f"daily_{var}"] = values[idx] if idx is not None and idx < len(values) else None
-                if idx is not None:
-                    end = min(idx + MAX_DAILY_FORECAST, len(times))
-                    result[f"daily_{var}_forecast"] = [
-                        {"time": times[i], "value": values[i] if i < len(values) else None}
-                        for i in range(idx, end)
-                    ]
+                value = _value(daily, var, idx)
+                result[f"daily_{var}"] = (
+                    _utc_timestamp(value)
+                    if var in ("sunrise", "sunset") and value is not None
+                    else value
+                )
+                result[f"daily_{var}_forecast"] = [
+                    {
+                        "time": dates[i].isoformat(),
+                        "value": (
+                            _utc_timestamp(value).isoformat()
+                            if var in ("sunrise", "sunset") and value is not None
+                            else value
+                        ),
+                    }
+                    for i in upcoming
+                    for value in [_value(daily, var, i)]
+                ]
 
         return result
 
@@ -176,8 +199,9 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
 
     def _parse_weather(self, raw: dict[str, Any]) -> dict[str, Any]:
-        now = datetime.now()
-        current_raw = raw.get("current", {})
+        now = dt_util.utcnow()
+        zone = _response_timezone(raw)
+        current_raw = raw.get("current") or {}
 
         weather: dict[str, Any] = {
             "temperature": current_raw.get("temperature_2m"),
@@ -198,29 +222,31 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         # Hourly forecast
-        hourly_raw = raw.get("hourly", {})
-        h_times = hourly_raw.get("time", [])
+        hourly_raw = raw.get("hourly") or {}
+        h_times = [_utc_timestamp(t) for t in _series(hourly_raw, "time")]
         if h_times:
-            current_hour = now.strftime("%Y-%m-%dT%H:00")
-            start = next((i for i, t in enumerate(h_times) if t >= current_hour), 0)
-            end = min(start + MAX_HOURLY_FORECAST, len(h_times))
+            upcoming = [
+                i for i, t in enumerate(h_times) if t + timedelta(hours=1) > now
+            ][:MAX_HOURLY_FORECAST]
 
-            h_temp = hourly_raw.get("temperature_2m", [])
-            h_code = hourly_raw.get("weather_code", [])
-            h_wind = hourly_raw.get("wind_speed_10m", [])
-            h_bearing = hourly_raw.get("wind_direction_10m", [])
-            h_precip_prob = hourly_raw.get("precipitation_probability", [])
-            h_precip = hourly_raw.get("precipitation", [])
-            h_pressure = hourly_raw.get("pressure_msl", [])
-            h_cloud = hourly_raw.get("cloud_cover", [])
-            h_humidity = hourly_raw.get("relative_humidity_2m", [])
+            h_temp = _series(hourly_raw, "temperature_2m")
+            h_code = _series(hourly_raw, "weather_code")
+            h_wind = _series(hourly_raw, "wind_speed_10m")
+            h_bearing = _series(hourly_raw, "wind_direction_10m")
+            h_precip_prob = _series(hourly_raw, "precipitation_probability")
+            h_precip = _series(hourly_raw, "precipitation")
+            h_pressure = _series(hourly_raw, "pressure_msl")
+            h_cloud = _series(hourly_raw, "cloud_cover")
+            h_humidity = _series(hourly_raw, "relative_humidity_2m")
+            h_is_day = _series(hourly_raw, "is_day")
 
-            for i in range(start, end):
+            for i in upcoming:
                 code = h_code[i] if i < len(h_code) else None
-                # Assume day for hourly forecasts (no is_day in hourly by default)
                 weather["hourly_forecast"].append({
-                    "datetime": f"{h_times[i]}:00",
-                    "condition": wmo_to_ha_condition(code),
+                    "datetime": h_times[i].isoformat(),
+                    "condition": wmo_to_ha_condition(
+                        code, h_is_day[i] if i < len(h_is_day) else None
+                    ),
                     "native_temperature": h_temp[i] if i < len(h_temp) else None,
                     "native_wind_speed": h_wind[i] if i < len(h_wind) else None,
                     "wind_bearing": h_bearing[i] if i < len(h_bearing) else None,
@@ -232,25 +258,28 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 })
 
         # Daily forecast
-        daily_raw = raw.get("daily", {})
-        d_times = daily_raw.get("time", [])
-        if d_times:
-            today = now.strftime("%Y-%m-%d")
-            start = next((i for i, t in enumerate(d_times) if t >= today), 0)
-            end = min(start + MAX_DAILY_FORECAST, len(d_times))
+        daily_raw = raw.get("daily") or {}
+        dates = _daily_dates(raw, daily_raw)
+        if dates:
+            today = now.astimezone(zone).date()
+            upcoming = [
+                i for i, date in enumerate(dates) if date >= today
+            ][:MAX_DAILY_FORECAST]
 
-            d_max = daily_raw.get("temperature_2m_max", [])
-            d_min = daily_raw.get("temperature_2m_min", [])
-            d_code = daily_raw.get("weather_code", [])
-            d_wind = daily_raw.get("wind_speed_10m_max", [])
-            d_bearing = daily_raw.get("wind_direction_10m_dominant", [])
-            d_precip = daily_raw.get("precipitation_sum", [])
-            d_precip_prob = daily_raw.get("precipitation_probability_max", [])
+            d_max = _series(daily_raw, "temperature_2m_max")
+            d_min = _series(daily_raw, "temperature_2m_min")
+            d_code = _series(daily_raw, "weather_code")
+            d_wind = _series(daily_raw, "wind_speed_10m_max")
+            d_bearing = _series(daily_raw, "wind_direction_10m_dominant")
+            d_precip = _series(daily_raw, "precipitation_sum")
+            d_precip_prob = _series(daily_raw, "precipitation_probability_max")
 
-            for i in range(start, end):
+            for i in upcoming:
                 code = d_code[i] if i < len(d_code) else None
                 weather["daily_forecast"].append({
-                    "datetime": f"{d_times[i]}T00:00:00",
+                    "datetime": datetime.combine(
+                        dates[i], time(), tzinfo=zone
+                    ).astimezone(dt_util.UTC).isoformat(),
                     "condition": wmo_to_ha_condition(code),
                     "native_temperature": d_max[i] if i < len(d_max) else None,
                     "native_templow": d_min[i] if i < len(d_min) else None,
@@ -261,6 +290,45 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 })
 
         return weather
+
+
+def _response_timezone(raw: dict[str, Any]) -> tzinfo:
+    """Use the API location, never the Home Assistant host's timezone."""
+    zone = dt_util.get_time_zone(raw["timezone"])
+    if zone is None:
+        raise ValueError(f"Unknown API timezone: {raw['timezone']}")
+    return zone
+
+
+def _utc_timestamp(value: int | float) -> datetime:
+    """Decode the explicitly requested Unix time without guessing a timezone."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"Expected a Unix timestamp, got {value!r}")
+    return dt_util.utc_from_timestamp(value)
+
+
+def _series(block: dict[str, Any], key: str) -> list[Any]:
+    """Missing/null variable arrays represent unavailable measurements."""
+    values = block.get(key)
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError(f"Expected an array for {key}")
+    return values
+
+
+def _value(block: dict[str, Any], key: str, index: int | None) -> Any:
+    values = _series(block, key)
+    return values[index] if index is not None and index < len(values) else None
+
+
+def _daily_dates(raw: dict[str, Any], daily: dict[str, Any]) -> list[date]:
+    """Open-Meteo daily Unix dates use the response's fixed UTC offset."""
+    offset = timedelta(seconds=raw["utc_offset_seconds"])
+    return [
+        (_utc_timestamp(value) + offset).date()
+        for value in _series(daily, "time")
+    ]
 
 
 def _m_to_km(value: float | None) -> float | None:

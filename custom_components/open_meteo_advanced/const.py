@@ -34,7 +34,7 @@ WEATHER_CURRENT_VARS = [
 WEATHER_HOURLY_VARS = [
     "temperature_2m", "weather_code", "wind_speed_10m", "wind_direction_10m",
     "precipitation_probability", "precipitation", "pressure_msl",
-    "cloud_cover", "relative_humidity_2m",
+    "cloud_cover", "relative_humidity_2m", "is_day",
 ]
 WEATHER_DAILY_VARS = [
     "temperature_2m_max", "temperature_2m_min", "weather_code",
