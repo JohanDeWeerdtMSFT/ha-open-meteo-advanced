@@ -1,11 +1,13 @@
 {
   "domain": "open_meteo_advanced",
   "name": "Open-Meteo Advanced",
-  "version": "1.0.0",
+  "codeowners": ["@JohanDeWeerdtMSFT"],
   "config_flow": true,
-  "documentation": "https://open-meteo.com/en/docs",
-  "requirements": [],
   "dependencies": [],
-  "codeowners": [],
-  "iot_class": "cloud_polling"
+  "documentation": "https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced#readme",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced/issues",
+  "requirements": [],
+  "version": "1.0.0"
 }

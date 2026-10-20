@@ -22,8 +22,28 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that e
 
 ## Requirements
 
-- Home Assistant **2023.x or newer**
+- Home Assistant Core **2026.10.2** is the targeted support baseline.
+  Older releases are not supported by this fork; later versions are not yet verified.
+- HACS installed for the custom-repository path below (manual installation remains available).
 - Internet access to `api.open-meteo.com` (free, no API key required for personal use)
+
+### Validation and readiness
+
+This personal fork is being prepared for **HACS custom-repository installation**,
+not submission to the HACS default store. The target system is HAOS 18.3 with
+Core 2026.10.2. Hosted tests exercise the real Core package with mocked API
+responses; they do not certify HAOS/Supervisor behavior or a live installation.
+Check the [Validate workflow](https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced/actions/workflows/validate.yaml)
+on the exact commit before installing.
+
+The workflow runs Home Assistant hassfest, HACS validation, and focused tests
+against `homeassistant==2026.10.2` on Python 3.14 (Core requires at least 3.14.2).
+It never substitutes another Core version if the target is unavailable.
+HACS's `brands` and `license` publication checks are explicitly excluded:
+there are no brand assets and the inherited license grant is unverified
+([license blocker](https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced/issues/2)).
+A green scoped workflow is **not** full publication/release approval.
+No release is published by this work.
 
 ---
 
@@ -39,9 +59,70 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that e
 3. Restart Home Assistant.
 4. Go to **Settings → Devices & Services → + Add Integration** and search for **Open-Meteo Advanced**.
 
-### HACS (coming soon)
+### HACS custom repository (this fork)
 
-Support for installation via [HACS](https://hacs.xyz/) is planned.
+1. Wait for the linked installation-readiness PR to be reviewed and merged.
+   HACS normally downloads the default branch; adding this URL before the PR
+   lands will still download the old code. Do not treat a successful branch CI
+   run as evidence that `master` already contains the changes.
+2. Create a Home Assistant backup, download it off-device, and note the current
+   integration version/commit. Agree on a maintenance window for the restart.
+3. Open **HACS**, select the top-right menu, then **Custom repositories**.
+4. Add `https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced`
+   with type/category **Integration**. Do not add the upstream repository
+   expecting this fork's changes.
+5. Search for **Open-Meteo Advanced**, open it and choose **Download**.
+   Without published releases HACS downloads the default branch commit; record
+   that commit. The integration's `manifest.json` version alone does not identify it.
+6. At the agreed time, restart Home Assistant. Then open
+   **Settings → Devices & Services → Add Integration → Open-Meteo Advanced**.
+   Start with `best_match`, your coordinates and a small set of variables.
+7. Verify that the new sensors have values, that sunrise/sunset timestamps work,
+   and that `weather.get_forecasts` returns daily/hourly forecasts for the new
+   weather entity. Check the integration logs for setup/API errors.
+
+This installs only `custom_components/open_meteo_advanced`. It must **not**
+replace `open_meteo`, remove the built-in integration, or rename its existing
+entities. Keep current dashboards/automations on the built-in entities until
+the new ones have been checked. No live installation or restart is performed
+by the preparation/CI workflow.
+
+### Updates and rollback
+
+Before updating, back up Home Assistant and retain the currently installed
+`custom_components/open_meteo_advanced` folder plus its HACS commit/version.
+Read the diff and require a passing workflow for the new commit. Use HACS's
+**Update**/**Redownload** control, then restart in a coordinated window.
+HACS handles updates to this fork only; it does not follow upstream changes
+automatically. There are currently no published releases to select as a
+known-good rollback version.
+
+If an update fails, do not delete/recreate the config entry (its ID determines
+entity unique IDs). If HACS offers the recorded known-good release, select it
+via **Redownload**. For an untagged/default-branch installation, restore the
+saved integration folder or the pre-update Home Assistant backup instead.
+Restart after restoring and check the logs and existing entity IDs. Restore a
+full backup when Core/configuration has also changed. Reverting this PR in Git
+alone does not roll back files already installed on Home Assistant.
+
+For a failed initial install, remove only this custom integration's entry and
+files through the HA/HACS UI and restart at an agreed time; leave the built-in
+Open-Meteo integration untouched.
+
+### Development checks
+
+Use the GitHub-hosted **Validate** workflow rather than installing Home Assistant
+or running heavy tests on Windows ARM. Enable Actions for this fork if GitHub
+shows them disabled. The equivalent test command on a compatible Linux/Python
+3.14 runner is `python -m pip install -r requirements_test.txt`, followed by
+`python -m pytest -q`. Tests disallow external network access.
+
+Authoritative references:
+[HACS custom repositories](https://www.hacs.xyz/docs/faq/custom_repositories/),
+[integration requirements](https://www.hacs.xyz/docs/publish/integration/),
+[HACS validation action](https://www.hacs.xyz/docs/publish/action/),
+[Home Assistant manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/),
+and [weather forecast contract](https://developers.home-assistant.io/docs/core/entity/weather/).
 
 ---
 
@@ -69,6 +150,8 @@ The integration is configured through a five-step UI wizard.
 ### Steps 3–5 — Variables
 
 Enter variable names separated by commas. Leaving a field blank creates no sensors for that category.
+Unknown names are rejected rather than silently discarded. Latitude must be
+between -90 and 90, and longitude between -180 and 180.
 
 - **Step 3** — Current variables (real-time)
 - **Step 4** — Hourly variables
@@ -128,9 +211,9 @@ Every sensor exposes its upcoming values as a `forecast` attribute — useful in
 **Hourly sensors** — next 48 hours:
 ```yaml
 forecast:
-  - time: "2026-05-12T15:00"
+  - time: "2026-05-12T15:00:00+00:00"
     value: 22.4
-  - time: "2026-05-12T16:00"
+  - time: "2026-05-12T16:00:00+00:00"
     value: 23.1
   ...
 ```
@@ -159,6 +242,15 @@ The weather card in HA Lovelace will automatically show forecasts.
 
 The required API variables for the weather entity are fetched **automatically** — no manual variable selection needed. If you also select those same variables as sensors, they are deduplicated into a single API call.
 
+API requests retain `timezone=auto` for location-local daily boundaries and use
+Unix timestamps to distinguish repeated DST hours. Forecast datetimes and
+sunrise/sunset sensor states are timezone-aware UTC; daily sensor forecast
+labels remain location-local dates. `past_days` never makes yesterday's values
+the current value. Missing/null measurements are unknown, and expired forecast
+windows are not recycled. Disabling the weather option reloads both platforms;
+Home Assistant may keep an unavailable registry placeholder for the weather
+entity so re-enabling it reuses the same unique ID.
+
 ### WMO Code → HA Condition Mapping
 
 | WMO | HA condition |
@@ -182,6 +274,14 @@ All weather data is fetched from the [Open-Meteo API](https://open-meteo.com/en/
 
 ---
 
-## License
+## License and provenance
 
-MIT
+The inherited upstream README labels this project **MIT**. This fork originated
+from [stilli00/ha-open-meteo-advanced](https://github.com/stilli00/ha-open-meteo-advanced)
+at commit `f0479315f242e830da9806734ebb64fdd2dcad93`; the starting tree contains
+no LICENSE file, full license grant or copyright notice. Existing attribution
+is preserved, but this fork does not invent a rights holder, permission grant,
+or replacement license text. Confirm the applicable license and required notices
+with the upstream author before publishing a release or redistributing it as a
+fully licensed package. The unresolved provenance is tracked in
+[issue #2](https://github.com/JohanDeWeerdtMSFT/ha-open-meteo-advanced/issues/2).
