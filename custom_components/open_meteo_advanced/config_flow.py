@@ -98,9 +98,12 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_CURRENT_VARS] = _parse_multiselect(
-                user_input.get(CONF_CURRENT_VARS, ""), _CURRENT_KEYS
-            )
+            try:
+                self._data[CONF_CURRENT_VARS] = _parse_multiselect(
+                    user_input.get(CONF_CURRENT_VARS, ""), _CURRENT_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "current_vars", CONF_CURRENT_VARS, user_input)
             return await self.async_step_hourly_vars()
 
         schema = vol.Schema(
@@ -108,7 +111,6 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_CURRENT_VARS, default=""): str,
             }
         )
-        description = "Inserisci le variabili separate da virgola.\nDisponibili: " + ", ".join(_CURRENT_KEYS)
         return self.async_show_form(
             step_id="current_vars",
             data_schema=schema,
@@ -119,9 +121,12 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_HOURLY_VARS] = _parse_multiselect(
-                user_input.get(CONF_HOURLY_VARS, ""), _HOURLY_KEYS
-            )
+            try:
+                self._data[CONF_HOURLY_VARS] = _parse_multiselect(
+                    user_input.get(CONF_HOURLY_VARS, ""), _HOURLY_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "hourly_vars", CONF_HOURLY_VARS, user_input)
             return await self.async_step_daily_vars()
 
         schema = vol.Schema(
@@ -135,9 +140,12 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_DAILY_VARS] = _parse_multiselect(
-                user_input.get(CONF_DAILY_VARS, ""), _DAILY_KEYS
-            )
+            try:
+                self._data[CONF_DAILY_VARS] = _parse_multiselect(
+                    user_input.get(CONF_DAILY_VARS, ""), _DAILY_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "daily_vars", CONF_DAILY_VARS, user_input)
             return self.async_create_entry(
                 title=self._data.get(CONF_NAME, DEFAULT_NAME),
                 data=self._data,
@@ -159,12 +167,31 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 def _parse_multiselect(value: str | list, valid_keys: list[str]) -> list[str]:
-    """Accept either a comma-separated string or a list; filter to known keys."""
+    """Accept known variables, preserving order while removing duplicates."""
     if isinstance(value, list):
         items = value
     else:
         items = [v.strip() for v in value.split(",") if v.strip()]
-    return [v for v in items if v in valid_keys]
+    if any(v not in valid_keys for v in items):
+        raise vol.Invalid("Unknown variable name")
+    return list(dict.fromkeys(items))
+
+
+def _invalid_variables(
+    flow: config_entries.ConfigFlow | config_entries.OptionsFlow,
+    step_id: str,
+    key: str,
+    user_input: dict[str, Any],
+) -> dict:
+    """Keep invalid input editable and display a field-specific error."""
+    value = user_input.get(key, "")
+    if isinstance(value, list):
+        value = ", ".join(value)
+    return flow.async_show_form(
+        step_id=step_id,
+        data_schema=vol.Schema({vol.Optional(key, default=value): str}),
+        errors={key: "invalid_variables"},
+    )
 
 
 class OpenMeteoOptionsFlow(config_entries.OptionsFlow):
@@ -218,9 +245,12 @@ class OpenMeteoOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_CURRENT_VARS] = _parse_multiselect(
-                user_input.get(CONF_CURRENT_VARS, ""), _CURRENT_KEYS
-            )
+            try:
+                self._data[CONF_CURRENT_VARS] = _parse_multiselect(
+                    user_input.get(CONF_CURRENT_VARS, ""), _CURRENT_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "current_vars", CONF_CURRENT_VARS, user_input)
             return await self.async_step_hourly_vars()
 
         current = ", ".join(self._data.get(CONF_CURRENT_VARS, []))
@@ -231,9 +261,12 @@ class OpenMeteoOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_HOURLY_VARS] = _parse_multiselect(
-                user_input.get(CONF_HOURLY_VARS, ""), _HOURLY_KEYS
-            )
+            try:
+                self._data[CONF_HOURLY_VARS] = _parse_multiselect(
+                    user_input.get(CONF_HOURLY_VARS, ""), _HOURLY_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "hourly_vars", CONF_HOURLY_VARS, user_input)
             return await self.async_step_daily_vars()
 
         current = ", ".join(self._data.get(CONF_HOURLY_VARS, []))
@@ -244,9 +277,12 @@ class OpenMeteoOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> dict:
         if user_input is not None:
-            self._data[CONF_DAILY_VARS] = _parse_multiselect(
-                user_input.get(CONF_DAILY_VARS, ""), _DAILY_KEYS
-            )
+            try:
+                self._data[CONF_DAILY_VARS] = _parse_multiselect(
+                    user_input.get(CONF_DAILY_VARS, ""), _DAILY_KEYS
+                )
+            except vol.Invalid:
+                return _invalid_variables(self, "daily_vars", CONF_DAILY_VARS, user_input)
             return self.async_create_entry(title="", data=self._data)
 
         current = ", ".join(self._data.get(CONF_DAILY_VARS, []))

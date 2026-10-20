@@ -1,5 +1,8 @@
 {
   "config": {
+    "error": {
+      "invalid_variables": "Use only supported variable names from the README, separated by commas."
+    },
     "step": {
       "user": {
         "title": "Location & Weather Model",
@@ -44,6 +47,9 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_variables": "Use only supported variable names from the README, separated by commas."
+    },
     "step": {
       "init": {
         "title": "Location & Weather Model",
