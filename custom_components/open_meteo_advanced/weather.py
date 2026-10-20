@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_MODEL, CONF_NAME, DOMAIN
+from .const import CONF_MODEL, CONF_NAME, CONF_WEATHER_ENTITY, DOMAIN
 from .coordinator import OpenMeteoCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    opts = {**entry.data, **entry.options}
+    if not opts.get(CONF_WEATHER_ENTITY, False):
+        return
     coordinator: OpenMeteoCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([OpenMeteoWeatherEntity(coordinator, entry)])
 
