@@ -61,8 +61,8 @@ def api_data():
 
 
 @pytest.fixture
-def mock_api(aioclient_mock, api_data):
-    """Return the format requested at the HTTP boundary, as the real API does."""
+def api_epoch_data(api_data):
+    """Encode the same API fixture with Open-Meteo's fixed-offset daily dates."""
     epoch = deepcopy(api_data)
     for section, key in [
         ("hourly", "time"), ("daily", "time"),
@@ -74,6 +74,12 @@ def mock_api(aioclient_mock, api_data):
             ).timestamp()) if value is not None else None
             for value in api_data[section][key]
         ]
-    aioclient_mock.get(API_BASE_URL, params={"timeformat": "unixtime"}, json=epoch)
+    return epoch
+
+
+@pytest.fixture
+def mock_api(aioclient_mock, api_data, api_epoch_data):
+    """Return the format requested at the HTTP boundary, as the real API does."""
+    aioclient_mock.get(API_BASE_URL, params={"timeformat": "unixtime"}, json=api_epoch_data)
     aioclient_mock.get(API_BASE_URL, json=api_data)
     return aioclient_mock

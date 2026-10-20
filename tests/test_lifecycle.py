@@ -56,7 +56,9 @@ async def test_options_toggle_unloads_weather_and_preserves_entity_identity(
 
     await set_weather_option(hass, config_entry, False)
     assert config_entry.state is ConfigEntryState.LOADED
-    assert hass.states.get(weather) is None
+    # Core retains a registry-only placeholder so the identity can be reused.
+    assert hass.states.get(weather).state == "unavailable"
+    assert hass.states.get(weather).attributes["restored"] is True
     assert hass.states.get(sensor).state == "11"
     assert config_entry.options["current_variables"] == ["temperature_2m"]
 
@@ -74,3 +76,22 @@ async def test_options_toggle_unloads_weather_and_preserves_entity_identity(
     assert config_entry.entry_id not in hass.data[DOMAIN]
     assert hass.config_entries.async_get_entry(builtin.entry_id) is builtin
     assert hass.states.get("weather.existing_open_meteo") == existing
+
+
+async def test_empty_sensor_selection_without_weather_does_not_call_api(
+    hass, config_entry, aioclient_mock
+):
+    """An explicitly empty configuration is valid and requires no network."""
+    hass.config_entries.async_update_entry(
+        config_entry,
+        options={
+            "weather_entity": False, "current_variables": [],
+            "hourly_variables": [], "daily_variables": [],
+        },
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert aioclient_mock.call_count == 0
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    assert config_entry.entry_id not in hass.data[DOMAIN]

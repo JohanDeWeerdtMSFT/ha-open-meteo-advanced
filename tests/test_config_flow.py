@@ -88,3 +88,42 @@ async def test_variable_form_keeps_unknown_names_visible(hass, options, step, ke
     assert result["errors"] == {key: "invalid_variables"}
     fields = probatio.to_field_list(result["data_schema"])
     assert fields[0]["default"] == "temperature_2m, misspelled_variable"
+
+
+async def test_setup_wizard_accepts_corrected_variables_and_creates_entry(
+    hass, mock_api, freezer
+):
+    """A user can correct a typo, deduplicate names and finish all setup steps."""
+    freezer.move_to("2026-10-20T22:30:00+00:00")
+    manager = hass.config_entries.flow
+    result = await manager.async_init(DOMAIN, context={"source": "user"})
+    location = {
+        "name": "Brussels", "latitude": 50.85, "longitude": 4.35,
+        "model": "best_match", "weather_entity": True,
+    }
+    result = await manager.async_configure(
+        result["flow_id"], result["data_schema"](location)
+    )
+    result = await manager.async_configure(
+        result["flow_id"],
+        result["data_schema"]({"update_interval": 15, "forecast_days": 1, "past_days": 0}),
+    )
+    result = await manager.async_configure(
+        result["flow_id"], {"current_variables": "temperature_2m, typo"}
+    )
+    assert result["errors"] == {"current_variables": "invalid_variables"}
+    result = await manager.async_configure(
+        result["flow_id"], {"current_variables": " temperature_2m, temperature_2m "}
+    )
+    result = await manager.async_configure(
+        result["flow_id"], {"hourly_variables": ""}
+    )
+    result = await manager.async_configure(
+        result["flow_id"], {"daily_variables": "sunrise"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["current_variables"] == ["temperature_2m"]
+    assert result["data"]["hourly_variables"] == []
+    assert result["data"]["daily_variables"] == ["sunrise"]
+    await hass.async_block_till_done()
+    assert mock_api.call_count == 1

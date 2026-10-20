@@ -211,9 +211,9 @@ Every sensor exposes its upcoming values as a `forecast` attribute — useful in
 **Hourly sensors** — next 48 hours:
 ```yaml
 forecast:
-  - time: "2026-05-12T15:00"
+  - time: "2026-05-12T15:00:00+00:00"
     value: 22.4
-  - time: "2026-05-12T16:00"
+  - time: "2026-05-12T16:00:00+00:00"
     value: 23.1
   ...
 ```
@@ -241,6 +241,15 @@ When enabled, a `weather.<location_name>` entity is created. It supports:
 The weather card in HA Lovelace will automatically show forecasts.
 
 The required API variables for the weather entity are fetched **automatically** — no manual variable selection needed. If you also select those same variables as sensors, they are deduplicated into a single API call.
+
+API requests retain `timezone=auto` for location-local daily boundaries and use
+Unix timestamps to distinguish repeated DST hours. Forecast datetimes and
+sunrise/sunset sensor states are timezone-aware UTC; daily sensor forecast
+labels remain location-local dates. `past_days` never makes yesterday's values
+the current value. Missing/null measurements are unknown, and expired forecast
+windows are not recycled. Disabling the weather option reloads both platforms;
+Home Assistant may keep an unavailable registry placeholder for the weather
+entity so re-enabling it reuses the same unique ID.
 
 ### WMO Code → HA Condition Mapping
 
