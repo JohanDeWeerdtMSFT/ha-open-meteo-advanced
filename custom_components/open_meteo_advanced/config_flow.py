@@ -58,8 +58,12 @@ class OpenMeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
-                vol.Required(CONF_LATITUDE, default=0.0): vol.Coerce(float),
-                vol.Required(CONF_LONGITUDE, default=0.0): vol.Coerce(float),
+                vol.Required(CONF_LATITUDE, default=0.0): vol.All(
+                    vol.Coerce(float), vol.Range(min=-90, max=90)
+                ),
+                vol.Required(CONF_LONGITUDE, default=0.0): vol.All(
+                    vol.Coerce(float), vol.Range(min=-180, max=180)
+                ),
                 vol.Required(CONF_MODEL, default="best_match"): vol.In(_MODEL_KEYS),
                 vol.Required(CONF_WEATHER_ENTITY, default=True): bool,
             }
@@ -180,8 +184,12 @@ class OpenMeteoOptionsFlow(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=self._data.get(CONF_NAME, DEFAULT_NAME)): str,
-                vol.Required(CONF_LATITUDE, default=self._data.get(CONF_LATITUDE, 0.0)): vol.Coerce(float),
-                vol.Required(CONF_LONGITUDE, default=self._data.get(CONF_LONGITUDE, 0.0)): vol.Coerce(float),
+                vol.Required(CONF_LATITUDE, default=self._data.get(CONF_LATITUDE, 0.0)): vol.All(
+                    vol.Coerce(float), vol.Range(min=-90, max=90)
+                ),
+                vol.Required(CONF_LONGITUDE, default=self._data.get(CONF_LONGITUDE, 0.0)): vol.All(
+                    vol.Coerce(float), vol.Range(min=-180, max=180)
+                ),
                 vol.Required(CONF_MODEL, default=self._data.get(CONF_MODEL, "best_match")): vol.In(_MODEL_KEYS),
                 vol.Required(CONF_WEATHER_ENTITY, default=self._data.get(CONF_WEATHER_ENTITY, True)): bool,
             }

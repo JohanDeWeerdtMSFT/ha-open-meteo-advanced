@@ -45,3 +45,46 @@ async def test_location_form_rejects_out_of_bounds_coordinates(hass, options, fi
     data[field] = value
     with pytest.raises(probatio.Invalid):
         result["data_schema"](data)
+
+
+@pytest.mark.parametrize("options", [False, True])
+@pytest.mark.parametrize(
+    ("step", "key"),
+    [
+        ("current_vars", "current_variables"),
+        ("hourly_vars", "hourly_variables"),
+        ("daily_vars", "daily_variables"),
+    ],
+)
+async def test_variable_form_keeps_unknown_names_visible(hass, options, step, key):
+    """A typo must not silently remove a requested sensor."""
+    if options:
+        entry = MockConfigEntry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        manager = hass.config_entries.options
+        result = await manager.async_init(entry.entry_id)
+    else:
+        manager = hass.config_entries.flow
+        result = await manager.async_init(DOMAIN, context={"source": "user"})
+    result = await manager.async_configure(
+        result["flow_id"],
+        {"name": "Brussels", "latitude": 50.85, "longitude": 4.35,
+         "model": "best_match", "weather_entity": False},
+    )
+    result = await manager.async_configure(
+        result["flow_id"], {"update_interval": 60, "forecast_days": 7, "past_days": 1}
+    )
+    for prior_step, prior_key in [
+        ("current_vars", "current_variables"), ("hourly_vars", "hourly_variables")
+    ]:
+        if prior_step == step:
+            break
+        result = await manager.async_configure(result["flow_id"], {prior_key: ""})
+    result = await manager.async_configure(
+        result["flow_id"], {key: "temperature_2m, misspelled_variable"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == step
+    assert result["errors"] == {key: "invalid_variables"}
+    fields = probatio.to_field_list(result["data_schema"])
+    assert fields[0]["default"] == "temperature_2m, misspelled_variable"
