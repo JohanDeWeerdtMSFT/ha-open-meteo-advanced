@@ -179,18 +179,13 @@ class OpenMeteoCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if var in ("sunrise", "sunset") and value is not None
                     else value
                 )
-                result[f"daily_{var}_forecast"] = [
-                    {
-                        "time": dates[i].isoformat(),
-                        "value": (
-                            _utc_timestamp(value).isoformat()
-                            if var in ("sunrise", "sunset") and value is not None
-                            else value
-                        ),
-                    }
-                    for i in upcoming
-                    for value in [_value(daily, var, i)]
-                ]
+                forecast = []
+                for i in upcoming:
+                    value = _value(daily, var, i)
+                    if var in ("sunrise", "sunset") and value is not None:
+                        value = _utc_timestamp(value).isoformat()
+                    forecast.append({"time": dates[i].isoformat(), "value": value})
+                result[f"daily_{var}_forecast"] = forecast
 
         return result
 

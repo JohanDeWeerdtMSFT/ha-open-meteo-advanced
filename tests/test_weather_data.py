@@ -231,3 +231,37 @@ async def test_forecast_windows_are_bounded_and_past_values_are_not_reused(
             blocking=True, return_response=True,
         )
         assert response[weather]["forecast"] == []
+
+
+@pytest.mark.parametrize("model", ["best_match", "dwd_icon_global"])
+async def test_request_honors_option_overrides_without_duplicate_weather_variables(
+    hass, config_entry, mock_api, freezer, model
+):
+    """Options override stored location/model/range without changing entity IDs."""
+    freezer.move_to("2026-10-20T22:30:00+00:00")
+    hass.config_entries.async_update_entry(
+        config_entry,
+        options={
+            "latitude": 51.0, "longitude": 5.0, "model": model,
+            "forecast_days": 3, "past_days": 2, "update_interval": 30,
+        },
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    query = mock_api.mock_calls[0][1].query
+    assert query["latitude"] == "51.0"
+    assert query["longitude"] == "5.0"
+    assert query["forecast_days"] == "3"
+    assert query["past_days"] == "2"
+    assert query["timeformat"] == "unixtime"
+    assert query["wind_speed_unit"] == "kmh"
+    if model == "best_match":
+        assert "models" not in query
+    else:
+        assert query["models"] == "dwd_icon_global"
+    for group in ["hourly", "daily", "current"]:
+        variables = query[group].split(",")
+        assert len(variables) == len(set(variables))
+    assert hass.states.get(
+        entity_id(hass, config_entry, "sensor", "hourly_temperature_2m")
+    ).state == "12"

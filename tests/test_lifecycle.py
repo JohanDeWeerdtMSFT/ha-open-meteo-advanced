@@ -71,8 +71,10 @@ async def test_options_toggle_unloads_weather_and_preserves_entity_identity(
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
-    assert hass.states.get(weather) is None
-    assert hass.states.get(sensor) is None
+    assert hass.states.get(weather).state == "unavailable"
+    assert hass.states.get(weather).attributes["restored"] is True
+    assert hass.states.get(sensor).state == "unavailable"
+    assert hass.states.get(sensor).attributes["restored"] is True
     assert config_entry.entry_id not in hass.data[DOMAIN]
     assert hass.config_entries.async_get_entry(builtin.entry_id) is builtin
     assert hass.states.get("weather.existing_open_meteo") == existing

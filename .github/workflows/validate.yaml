@@ -44,4 +44,6 @@ jobs:
       - name: Verify target version
         run: |
           python -c "from importlib.metadata import version; assert version('homeassistant') == '2026.10.2'; print('Home Assistant', version('homeassistant'))"
+          python -c "import custom_components.open_meteo_advanced.config_flow; import custom_components.open_meteo_advanced.sensor; import custom_components.open_meteo_advanced.weather; print('Integration imports outside pytest')"
+          python -m compileall -q custom_components tests
       - run: python -m pytest -q
